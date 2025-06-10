@@ -21,7 +21,8 @@ class PlayerTracker:
         return detections
     
 
-    def get_object_tracks(self, frames):
+    def get_object_tracks(self, frames, read_from_stub = False ,stub_path = None ):
+        
         detections = self.detect_frames(frames)
         tracks = []
 
