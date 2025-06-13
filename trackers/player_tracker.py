@@ -1,57 +1,48 @@
+from typing import Any, Dict, List, Sequence
 
+import supervision as sv
 from ultralytics import YOLO
-import supervision as sv 
-import sys 
-sys.path.append('../')
-from utils import read_stub,save_stub
+import sys
+
+sys.path.append("../")
+from utils import read_stub, save_stub  # type: ignore
+
+Frame = Any
+TrackFrame = Dict[int, Dict[str, List[float]]]
 
 
 class PlayerTracker:
-    def __init__(self, model_path):
-        self.model = YOLO(model_path)        # Load the YOLO model from given weights
-        self.tracker = sv.ByteTrack()        # Initialize the ByteTrack tracker
+    def __init__(self, modelPath: str) -> None:
+        self.model = YOLO(modelPath)
+        self.tracker = sv.ByteTrack()
 
-    def detect_frames(self, frames):
-        batch_size = 20       # Number of frames to process per batch
-        detections = []       # List to accumulate all detection results
+    def _detectBatch(self, frames: Sequence[Frame], conf: float = 0.5, batch: int = 20):
+        detected = []
+        for i in range(0, len(frames), batch):
+            detected.extend(self.model.predict(frames[i : i + batch], conf=conf))
+        return detected
 
-        for i in range(0, len(frames), batch_size):
-            batch_frames = frames[i:i + batch_size]
-            batch_detections = self.model.predict(batch_frames, conf=0.5)
-            detections += batch_detections 
-
-        return detections
-    
-
-    def get_object_tracks(self, frames, read_from_stub = False ,stub_path = None ):
-        
-        tracks = read_stub(read_from_stub, stub_path)
-        if tracks is not None:
-            if len(tracks) == len(frames):
-                return tracks
-
-
-        detections = self.detect_frames(frames)
-        tracks = []
-
-        for frame_num, detection in enumerate(detections):
-            cls_names= detection.names
-            cls_names_inv = {v:k for k, v in cls_names.items()}
-            
-            detection_supervision = sv.Detections.from_ultralytics(detection)
-
-            detection_with_tracks = self.tracker.update_with_detections(detection_supervision)
-
-            tracks.append({})
-            for frame_detection in detection_with_tracks:
-                bbox = frame_detection[0].tolist
-                cls_id = frame_detection[3]
-                track_id = frame_detection[4]
-
-                if cls_id == cls_names_inv["Player"]:
-                    tracks[frame_num][track_id]={"box":bbox}
-
-        save_stub(stub_path, tracks)
-
-        return tracks
-
+    def objectTracks(
+        self,
+        frames: Sequence[Frame],
+        *,
+        readFromStub: bool = False,
+        stubPath: str | None = None,
+    ) -> List[TrackFrame]:
+        cached = read_stub(readFromStub, stubPath)
+        if cached is not None and len(cached) == len(frames):
+            return cached  # type: ignore[return-value]
+        detections = self._detectBatch(frames)
+        out: List[TrackFrame] = []
+        for det in detections:
+            names = {v: k for k, v in det.names.items()}
+            supDet = sv.Detections.from_ultralytics(det)
+            trks = self.tracker.update_with_detections(supDet)
+            frameDict: TrackFrame = {}
+            for d in trks:
+                bbox, clsId, trkId = d[0].tolist(), d[3], d[4]
+                if clsId == names["Player"]:
+                    frameDict[trkId] = {"bbox": bbox}
+            out.append(frameDict)
+        save_stub(stubPath, out)
+        return out
